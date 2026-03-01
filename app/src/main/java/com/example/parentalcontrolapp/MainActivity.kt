@@ -5,8 +5,12 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.widget.*
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatActivity
+import com.example.parentalcontrolapp.ui.theme.DashboardScreen
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -17,16 +21,26 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import kotlin.concurrent.thread
+import androidx.appcompat.app.AlertDialog
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
-    private lateinit var deviceIdInput: EditText
-    private lateinit var linkButton: Button
-    private lateinit var statusView: TextView
-    private lateinit var summaryView: TextView
-
-    private var linkedDeviceId: String? = null
     private val handler = Handler(Looper.getMainLooper())
+
+    data class Child(
+        val deviceId: String,
+        val alias: String
+    )
+    private val childList = mutableListOf<Child>()
+    private lateinit var spinner: Spinner
+    private lateinit var addButton: Button
+    private lateinit var riskView: TextView
+    private lateinit var framesView: TextView
+    private lateinit var watchTimeView: TextView
+
+    private var selectedChild: Child? = null
+    private lateinit var childrenContainer: LinearLayout
+    private lateinit var riskCard: androidx.cardview.widget.CardView
 
     private val backendBase =
         "https://parental-nsfw-cloud.onrender.com"
@@ -74,128 +88,239 @@ class MainActivity : ComponentActivity() {
             }
 
         buildUI()
+
     }
+    private fun fetchChildMetrics(child: Child) {
 
-    private fun buildUI() {
+        thread {
+            try {
+                val url = URL("$backendBase/summary/${child.deviceId}")
+                val conn = url.openConnection() as HttpURLConnection
 
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-        layout.setPadding(40, 120, 40, 40)
+                val response = conn.inputStream.bufferedReader().readText()
+                val json = JSONObject(response)
 
-        val title = TextView(this)
-        title.textSize = 22f
-        title.text = "Parent Monitoring Dashboard"
-        title.gravity = Gravity.CENTER
+                val frames = json.getInt("total_bad_frames")
+                val watchTime = json.getInt("estimated_watch_time_seconds")
 
-        deviceIdInput = EditText(this)
-        deviceIdInput.hint = "Enter Child Device ID"
+                runOnUiThread {
 
-        linkButton = Button(this)
-        linkButton.text = "Link Device"
+                    riskCard.visibility = View.VISIBLE   // 👈 show card only when child selected
 
-        statusView = TextView(this)
-        summaryView = TextView(this)
+                    when {
+                        frames > 100 -> {
+                            riskView.text = "🔴 HIGH RISK"
+                            riskView.setTextColor(android.graphics.Color.BLACK)
+                            riskCard.setCardBackgroundColor(
+                                android.graphics.Color.parseColor("#FFCDD2") // pastel red
+                            )
+                        }
+                        frames > 20 -> {
+                            riskView.text = "🟡 MODERATE RISK"
+                            riskView.setTextColor(android.graphics.Color.BLACK)
+                            riskCard.setCardBackgroundColor(
+                                android.graphics.Color.parseColor("#FFF9C4") // pastel yellow
+                            )
+                        }
+                        else -> {
+                            riskView.text = "🟢 LOW RISK"
+                            riskView.setTextColor(android.graphics.Color.BLACK)
+                            riskCard.setCardBackgroundColor(
+                                android.graphics.Color.parseColor("#C8E6C9") // pastel green
+                            )
+                        }
+                    }
 
-        layout.addView(title)
-        layout.addView(deviceIdInput)
-        layout.addView(linkButton)
-        layout.addView(statusView)
-        layout.addView(summaryView)
+                    framesView.text = "Unusual Frames: $frames"
+                    watchTimeView.text = "Total screen Time: $watchTime sec"
+                }
 
-        setContentView(layout)
-
-        linkButton.setOnClickListener {
-            val id = deviceIdInput.text.toString().trim()
-            if (id.isNotEmpty()) {
-                linkedDeviceId = id
-                startMonitoring()
+            } catch (e: Exception) {
+                runOnUiThread {
+                    riskView.text = "Error loading data"
+                }
             }
         }
     }
+    private fun startMonitoringSelectedChild() {
 
-    private fun startMonitoring() {
-        Toast.makeText(this, "Device Linked", Toast.LENGTH_SHORT).show()
+        handler.removeCallbacksAndMessages(null)
 
         handler.post(object : Runnable {
             override fun run() {
-                fetchActive()
-                fetchSummary()
+
+                selectedChild?.let {
+                    fetchChildMetrics(it)
+                }
+
                 handler.postDelayed(this, 5000)
             }
         })
     }
 
-    private fun fetchActive() {
+    private fun showAddChildDialog() {
 
-        val id = linkedDeviceId ?: return
+        val dialogLayout = LinearLayout(this)
+        dialogLayout.orientation = LinearLayout.VERTICAL
+        dialogLayout.setPadding(40, 40, 40, 40)
 
-        thread {
-            try {
-                val url = URL("$backendBase/active/$id")
-                val conn = url.openConnection() as HttpURLConnection
+        val aliasInput = EditText(this)
+        aliasInput.hint = "Child Name"
 
-                val responseCode = conn.responseCode
-                val inputStream =
-                    if (responseCode == 200) conn.inputStream else conn.errorStream
-                val response =
-                    inputStream.bufferedReader().readText()
+        val deviceIdInput = EditText(this)
+        deviceIdInput.hint = "Child Device ID"
 
-                val json = JSONObject(response)
-                val active = json.getBoolean("active")
+        dialogLayout.addView(aliasInput)
+        dialogLayout.addView(deviceIdInput)
 
-                runOnUiThread {
-                    if (active) {
-                        statusView.text =
-                            "⚠️ ALERT: Child watching inappropriate content"
-                        statusView.setTextColor(android.graphics.Color.RED)
-                    } else {
-                        statusView.text = "Child Safe"
-                        statusView.setTextColor(android.graphics.Color.GREEN)
+        AlertDialog.Builder(this)
+            .setTitle("Add Child")
+            .setView(dialogLayout)
+            .setPositiveButton("Add") { _, _ ->
+
+                val alias = aliasInput.text.toString().trim()
+                val deviceId = deviceIdInput.text.toString().trim()
+
+                if (alias.isNotEmpty() && deviceId.isNotEmpty()) {
+
+                    val child = Child(deviceId, alias)
+                    childList.add(child)
+
+                    updateSpinner()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+    private fun updateSpinner() {
+
+        val aliasList = childList.map { it.alias }
+
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            aliasList
+        )
+
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinner.adapter = adapter
+        if (childList.isNotEmpty()) {
+            spinner.visibility = View.VISIBLE   // 👈 show it
+            spinner.setSelection(childList.size - 1)
+        } else {
+            spinner.visibility = View.GONE
+            riskCard.visibility = View.GONE // 👈 hide if empty
+        }
+
+    }
+
+    private fun buildUI() {
+
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(40, 120, 40, 40)
+        root.setBackgroundColor(android.graphics.Color.parseColor("#F8F9FA")) // soft light grey
+
+        val title = TextView(this)
+        title.text = "Parent Dashboard"
+        title.textSize = 24f
+        title.setTextColor(android.graphics.Color.parseColor("#34495E"))
+        title.gravity = Gravity.CENTER
+
+        val titleParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        titleParams.bottomMargin = 60
+        title.layoutParams = titleParams
+
+        // 🔵 Add Button (Pastel Blue)
+        addButton = Button(this)
+        addButton.text = "➕ Add Child"
+        addButton.setBackgroundColor(android.graphics.Color.parseColor("#A8DADC"))
+        addButton.setTextColor(android.graphics.Color.BLACK)
+
+        val addParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        addParams.bottomMargin = 40
+        addButton.layoutParams = addParams
+
+        // 🔽 Spinner
+        spinner = Spinner(this)
+        spinner.visibility = View.GONE
+
+        val spinnerParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        spinnerParams.bottomMargin = 60
+        spinner.layoutParams = spinnerParams
+
+        // 🟣 Risk Card
+        riskCard = androidx.cardview.widget.CardView(this)
+        riskCard.radius = 25f
+        riskCard.cardElevation = 12f
+        riskCard.visibility = View.GONE   // 👈 Hidden initially
+
+        val riskLayout = LinearLayout(this)
+        riskLayout.orientation = LinearLayout.VERTICAL
+        riskLayout.setPadding(40, 40, 40, 40)
+
+        riskView = TextView(this)
+        riskView.textSize = 22f
+
+        framesView = TextView(this)
+        framesView.textSize = 18f
+
+        watchTimeView = TextView(this)
+        watchTimeView.textSize = 18f
+
+        riskLayout.addView(riskView)
+        riskLayout.addView(framesView)
+        riskLayout.addView(watchTimeView)
+
+        riskCard.addView(riskLayout)
+
+        val cardParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        cardParams.bottomMargin = 40
+        riskCard.layoutParams = cardParams
+
+        // Add views in order
+        root.addView(title)
+        root.addView(addButton)
+        root.addView(spinner)
+        root.addView(riskCard)
+
+        setContentView(root)
+
+        addButton.setOnClickListener {
+            showAddChildDialog()
+        }
+
+        spinner.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: AdapterView<*>,
+                    view: android.view.View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    if (position < childList.size) {
+                        selectedChild = childList[position]
+                        startMonitoringSelectedChild()
                     }
                 }
 
-            } catch (e: Exception) {
-                runOnUiThread {
-                    statusView.text = "Error fetching active status: ${e.message}"
-                }
+                override fun onNothingSelected(parent: AdapterView<*>) {}
             }
-        }
     }
 
-    private fun fetchSummary() {
 
-        val id = linkedDeviceId ?: return
 
-        thread {
-            try {
-                val url = URL("$backendBase/summary/$id")
-                val conn = url.openConnection() as HttpURLConnection
 
-                val responseCode = conn.responseCode
-                val inputStream =
-                    if (responseCode == 200) conn.inputStream else conn.errorStream
-                val response =
-                    inputStream.bufferedReader().readText()
-
-                val json = JSONObject(response)
-
-                val frames =
-                    json.getInt("total_bad_frames")
-                val watchTime =
-                    json.getInt("estimated_watch_time_seconds")
-
-                runOnUiThread {
-                    summaryView.text =
-                        "\nTotal Bad Frames: $frames\n" +
-                                "Estimated Watch Time: $watchTime sec"
-                }
-
-            } catch (e: Exception) {
-                runOnUiThread {
-                    summaryView.text =
-                        "Error fetching summary: ${e.message}"
-                }
-            }
-        }
-    }
 }

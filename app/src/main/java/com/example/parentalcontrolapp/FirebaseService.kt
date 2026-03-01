@@ -12,6 +12,9 @@ class FirebaseService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
 
         println("MESSAGE RECEIVED FROM FCM")
+        println("MESSAGE RECEIVED FROM FCM")
+        println("DATA: ${remoteMessage.data}")
+        println("NOTIFICATION: ${remoteMessage.notification}")
 
         val title = remoteMessage.data["title"] ?: "Alert"
         val body = remoteMessage.data["body"] ?: "Incident detected"
