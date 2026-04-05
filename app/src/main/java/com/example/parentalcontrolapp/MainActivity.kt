@@ -7,14 +7,9 @@ import android.os.Looper
 import android.view.Gravity
 import android.widget.*
 import androidx.activity.ComponentActivity
-import java.io.IOException
+import android.content.Intent
 import java.net.HttpURLConnection
 import java.net.URL
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
 import org.json.JSONObject
 import kotlin.concurrent.thread
 
@@ -24,6 +19,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var linkButton: Button
     private lateinit var statusView: TextView
     private lateinit var summaryView: TextView
+    private lateinit var dashboardBtn: Button
 
     private var linkedDeviceId: String? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -35,7 +31,6 @@ class MainActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // 🔥 REQUEST NOTIFICATION PERMISSION (Android 13+)
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             requestPermissions(
                 arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
@@ -43,7 +38,6 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // 🔥 GET FCM TOKEN AND REGISTER PARENT
         FirebaseMessaging.getInstance().token
             .addOnCompleteListener { task ->
                 if (task.isSuccessful) {
@@ -59,16 +53,12 @@ class MainActivity : ComponentActivity() {
                         override fun onResponse(
                             call: retrofit2.Call<Map<String, String>>,
                             response: retrofit2.Response<Map<String, String>>
-                        ) {
-                            println("REGISTER RESPONSE: ${response.body()}")
-                        }
+                        ) {}
 
                         override fun onFailure(
                             call: retrofit2.Call<Map<String, String>>,
                             t: Throwable
-                        ) {
-                            println("REGISTER FAILED: ${t.message}")
-                        }
+                        ) {}
                     })
                 }
             }
@@ -93,12 +83,16 @@ class MainActivity : ComponentActivity() {
         linkButton = Button(this)
         linkButton.text = "Link Device"
 
+        dashboardBtn = Button(this)
+        dashboardBtn.text = "Open Control Dashboard"
+
         statusView = TextView(this)
         summaryView = TextView(this)
 
         layout.addView(title)
         layout.addView(deviceIdInput)
         layout.addView(linkButton)
+        layout.addView(dashboardBtn)
         layout.addView(statusView)
         layout.addView(summaryView)
 
@@ -110,6 +104,20 @@ class MainActivity : ComponentActivity() {
                 linkedDeviceId = id
                 startMonitoring()
             }
+        }
+
+        dashboardBtn.setOnClickListener {
+
+            val id = deviceIdInput.text.toString()
+
+            if (id.isEmpty()) {
+                Toast.makeText(this,"Link device first",Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            val intent = Intent(this, DashboardActivity::class.java)
+            intent.putExtra("device_id", id)
+            startActivity(intent)
         }
     }
 
@@ -134,11 +142,8 @@ class MainActivity : ComponentActivity() {
                 val url = URL("$backendBase/active/$id")
                 val conn = url.openConnection() as HttpURLConnection
 
-                val responseCode = conn.responseCode
-                val inputStream =
-                    if (responseCode == 200) conn.inputStream else conn.errorStream
                 val response =
-                    inputStream.bufferedReader().readText()
+                    conn.inputStream.bufferedReader().readText()
 
                 val json = JSONObject(response)
                 val active = json.getBoolean("active")
@@ -147,16 +152,14 @@ class MainActivity : ComponentActivity() {
                     if (active) {
                         statusView.text =
                             "⚠️ ALERT: Child watching inappropriate content"
-                        statusView.setTextColor(android.graphics.Color.RED)
                     } else {
                         statusView.text = "Child Safe"
-                        statusView.setTextColor(android.graphics.Color.GREEN)
                     }
                 }
 
             } catch (e: Exception) {
                 runOnUiThread {
-                    statusView.text = "Error fetching active status: ${e.message}"
+                    statusView.text = "Error: ${e.message}"
                 }
             }
         }
@@ -171,29 +174,25 @@ class MainActivity : ComponentActivity() {
                 val url = URL("$backendBase/summary/$id")
                 val conn = url.openConnection() as HttpURLConnection
 
-                val responseCode = conn.responseCode
-                val inputStream =
-                    if (responseCode == 200) conn.inputStream else conn.errorStream
                 val response =
-                    inputStream.bufferedReader().readText()
+                    conn.inputStream.bufferedReader().readText()
 
                 val json = JSONObject(response)
 
                 val frames =
                     json.getInt("total_bad_frames")
+
                 val watchTime =
                     json.getInt("estimated_watch_time_seconds")
 
                 runOnUiThread {
                     summaryView.text =
-                        "\nTotal Bad Frames: $frames\n" +
-                                "Estimated Watch Time: $watchTime sec"
+                        "\nBad Frames: $frames\nWatch Time: $watchTime sec"
                 }
 
             } catch (e: Exception) {
                 runOnUiThread {
-                    summaryView.text =
-                        "Error fetching summary: ${e.message}"
+                    summaryView.text = "Error: ${e.message}"
                 }
             }
         }

@@ -10,17 +10,29 @@ import com.google.firebase.messaging.RemoteMessage
 class FirebaseService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        println("=== FCM MESSAGE RECEIVED ===")
+        println("From: ${remoteMessage.from}")
+        println("Data: ${remoteMessage.data}")
+        println("Notification: ${remoteMessage.notification}")
 
-        println("MESSAGE RECEIVED FROM FCM")
+        val title = remoteMessage.notification?.title
+            ?: remoteMessage.data["title"]
+            ?: "Parental Alert"
 
-        val title = remoteMessage.data["title"] ?: "Alert"
-        val body = remoteMessage.data["body"] ?: "Incident detected"
+        val body = remoteMessage.notification?.body
+            ?: remoteMessage.data["body"]
+            ?: "Inappropriate content detected!"
 
         showNotification(title, body)
     }
 
-    private fun showNotification(title: String, message: String) {
+    override fun onNewToken(token: String) {
+        super.onNewToken(token)
+        println("NEW FCM TOKEN: $token")
+        // Optional: re-register to backend here if you want
+    }
 
+    private fun showNotification(title: String, message: String) {
         val channelId = "incident_alerts"
 
         val manager = getSystemService(NotificationManager::class.java)
@@ -39,6 +51,7 @@ class FirebaseService : FirebaseMessagingService() {
             .setContentText(message)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
             .build()
 
         manager.notify(1, notification)
